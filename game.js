@@ -6,7 +6,8 @@
   // Unlimited match duration; projectile speed still increases during play.
   let ballIdle = 0;
   const baseSpeed = () => Number($('speedSetting').value);
-  const speedMultiplier = () => time < 30 ? 1 : time < 60 ? 1.25 : time < 90 ? 1.5 : 1.7;
+  // Speed rises every 10 seconds, reaching 3x at 120 seconds and staying capped.
+  const speedMultiplier = () => 1 + Math.min(12, Math.floor(time / 10)) / 6;
   const currentBallSpeed = () => Math.round(baseSpeed() * speedMultiplier());
   const keys = new Set();
   let state = 'ready', players = [], ball, controlled, effects = [], time = 0, last = 0;
@@ -22,7 +23,8 @@
   }
   function updateScore() { $('blueCount').textContent = living(0).length; $('redCount').textContent = living(1).length; }
   function updateSpeedDisplay() {
-    $('ballSpeed').textContent = `${currentBallSpeed()} (${time < 30 ? '通常' : time < 60 ? '加速1' : time < 90 ? '加速2' : '最高速'})`;
+    const level = Math.min(12, Math.floor(time / 10));
+    $('ballSpeed').textContent = `${currentBallSpeed()} (${speedMultiplier().toFixed(2)}倍${level === 12 ? '・最高速' : ''})`;
   }
   function start() { reset(); state='playing'; $('overlay').hidden=true; $('status').textContent='ボールをひろって、Spaceで投げよう！'; last=performance.now(); canvas.focus(); }
   function finish(team) {
