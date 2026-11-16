@@ -3,8 +3,8 @@
   const canvas = document.querySelector('#court'), ctx = canvas.getContext('2d');
   const $ = id => document.getElementById(id);
   const W = canvas.width, H = canvas.height, R = 19, margin = 32;
-  const MATCH_SECONDS = 120, SUDDEN_DEATH_AT = 60;
-  let ballIdle = 0, suddenShown = false;
+  // Unlimited match duration; projectile speed still increases during play.
+  let ballIdle = 0;
   const baseSpeed = () => Number($('speedSetting').value);
   const speedMultiplier = () => time < 30 ? 1 : time < 60 ? 1.25 : time < 90 ? 1.5 : 1.7;
   const currentBallSpeed = () => Math.round(baseSpeed() * speedMultiplier());
@@ -18,21 +18,18 @@
     for (let team = 0; team < 2; team++) for (let i = 0; i < 3; i++) players.push({team, number:i+1, x:team ? 735 : 225, y:140+i*140, alive:true, wait:0, phase:i*2+team});
     controlled = players[0];
     ball = {x:300, y:280, vx:0, vy:0, owner:null, team:null, flight:0, lock:0, trail:[]};
-    effects = []; time = 0; ballIdle = 0; suddenShown = false; keys.clear(); updateScore(); updateClock();
+    effects = []; time = 0; ballIdle = 0; keys.clear(); updateScore(); updateSpeedDisplay();
   }
   function updateScore() { $('blueCount').textContent = living(0).length; $('redCount').textContent = living(1).length; }
-  function updateClock() {
-    const remaining = Math.max(0, Math.ceil(MATCH_SECONDS - time));
-    $('timer').textContent = `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`;
-    $('timer').classList.toggle('urgent', remaining <= SUDDEN_DEATH_AT);
+  function updateSpeedDisplay() {
     $('ballSpeed').textContent = `${currentBallSpeed()} (${time < 30 ? '通常' : time < 60 ? '加速1' : time < 90 ? '加速2' : '最高速'})`;
   }
   function start() { reset(); state='playing'; $('overlay').hidden=true; $('status').textContent='ボールをひろって、Spaceで投げよう！'; last=performance.now(); canvas.focus(); }
-  function finish(team, timedOut = false) {
+  function finish(team) {
     state='ended'; keys.clear(); $('overlay').hidden=false;
-    $('message').textContent=team===null?'引き分け！ もう一回！':team===0?'やったね！ あなたの勝ち！':'CPUの勝ち！ もう一度ちょうせん！';
-    $('detail').textContent=timedOut?`時間切れ！ 青 ${living(0).length}人・赤 ${living(1).length}人で判定したよ。`:'よける動きと、ボールをひろうタイミングがコツ！'; $('start').textContent='もう一度あそぶ';
-    $('status').textContent=team===null?'引き分け！':team===0?'青チームの勝利！':'赤チームの勝利！';
+    $('message').textContent=team===0?'やったね！ あなたの勝ち！':'CPUの勝ち！ もう一度ちょうせん！';
+    $('detail').textContent='よける動きと、ボールをひろうタイミングがコツ！'; $('start').textContent='もう一度あそぶ';
+    $('status').textContent=team===0?'青チームの勝利！':'赤チームの勝利！';
   }
   function throwBall(p) {
     if (ball.owner!==p || state!=='playing') return;
@@ -50,22 +47,25 @@
     p.y=clamp(p.y,margin+R,H-margin-R);
   }
   function update(dt) {
-    time+=dt; updateClock();
-    if(time>=MATCH_SECONDS){
-      const blue=living(0).length, red=living(1).length;
-      finish(blue===red?null:blue>red?0:1,true); return;
-    }
-    if(!suddenShown&&time>=SUDDEN_DEATH_AT){suddenShown=true;$('status').textContent='サドンデス！ あと60秒、CPUの動きがゆるやかになるよ！';}
+    time+=dt; updateSpeedDisplay();
     for (const p of players) {
       if(!p.alive) continue; p.wait=Math.max(0,p.wait-dt);
-      if(p===controlled){move(p,Number(keys.has('arrowright')||keys.has('d'))-Number(keys.has('arrowleft')||keys.has('a')),Number(keys.has('arrowdown')||keys.has('s'))-Number(keys.has('arrowup')||keys.has('w')),205,dt);if(ball.owner===p&&p.wait===0)throwBall(p);continue;}
-      if(ball.owner===p){if(p.wait===0)throwBall(p);continue;}
+      if(p===controlled){move(p,Number(keys.has('arrowright')||keys.has('d'))-Number(keys.has('arrowleft')||keys.has('a')),Number(keys.has('arrowdown')||keys.has('s'))-Number(keys.has('arrowup')||keys.has('w')),205,dt);continue;}
+      if(ball.owner===p){
+        // CPU runs up to the center line and aims before throwing.
+        const target=living(1-p.team).sort((a,b)=>distance(p,a)-distance(p,b))[0];
+        const lineX=p.team?W/2+R+8:W/2-R-8;
+        const targetY=target?clamp(target.y,margin+R,H-margin-R):p.y;
+        move(p,lineX-p.x,targetY-p.y,135,dt);
+        if(Math.abs(p.x-lineX)<5 && Math.abs(p.y-targetY)<45 && p.wait===0)throwBall(p);
+        continue;
+      }
       let tx=p.team?735:225, ty=140+(p.number-1)*140+Math.sin(time+p.phase)*42;
       const loose=!ball.owner && (ball.flight<=0 || ball.team===p.team);
       const ownHalf=p.team?ball.x>=W/2:ball.x<W/2;
       const closest=living(p.team).sort((a,b)=>distance(a,ball)-distance(b,ball))[0];
       if(loose&&ownHalf&&closest===p){tx=ball.x;ty=ball.y;}
-      if(time<SUDDEN_DEATH_AT&&ball.flight>0&&ball.team!==p.team&&Math.abs(ball.x-p.x)<130&&Math.abs(ball.y-p.y)<45){ty=p.y+(p.y<ball.y?-95:95);}
+      if(ball.flight>0&&ball.team!==p.team&&Math.abs(ball.x-p.x)<110&&Math.abs(ball.y-p.y)<40){ty=p.y+(p.y<ball.y?-95:95);}
       move(p,Math.abs(tx-p.x)>4?tx-p.x:0,Math.abs(ty-p.y)>4?ty-p.y:0,110,dt);
     }
     if(ball.owner){ballIdle=0;ball.x=ball.owner.x+(ball.owner.team?-25:25);ball.y=ball.owner.y-7;ball.trail=[];}
@@ -110,7 +110,7 @@
   document.addEventListener('keydown',e=>{const k=e.key.toLowerCase();if(['arrowup','arrowdown','arrowleft','arrowright','w','a','s','d',' '].includes(k)){if(state==='playing'){e.preventDefault();keys.add(k);if(k===' '&&!e.repeat)throwBall(controlled);}}});
   document.addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));
   window.addEventListener('blur',()=>keys.clear());document.addEventListener('visibilitychange',()=>{keys.clear();last=performance.now();});
-  $('speedSetting').addEventListener('change',updateClock);
+  $('speedSetting').addEventListener('change',updateSpeedDisplay);
   $('start').addEventListener('click',start);$('restart').addEventListener('click',start);
   canvas.tabIndex=0;reset();
   function frame(now){const dt=Math.min((now-last)/1000,.035);last=now;if(state==='playing')update(dt);draw();requestAnimationFrame(frame);}requestAnimationFrame(frame);
