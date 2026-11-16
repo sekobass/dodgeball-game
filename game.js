@@ -3,6 +3,8 @@
   const canvas = document.querySelector('#court'), ctx = canvas.getContext('2d');
   const $ = id => document.getElementById(id);
   const W = canvas.width, H = canvas.height, R = 19, margin = 32;
+  const MATCH_SECONDS = 120, SUDDEN_DEATH_AT = 60;
+  let ballIdle = 0, suddenShown = false;
   const keys = new Set();
   let state = 'ready', players = [], ball, controlled, effects = [], time = 0, last = 0;
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -13,15 +15,20 @@
     for (let team = 0; team < 2; team++) for (let i = 0; i < 3; i++) players.push({team, number:i+1, x:team ? 735 : 225, y:140+i*140, alive:true, wait:0, phase:i*2+team});
     controlled = players[0];
     ball = {x:300, y:280, vx:0, vy:0, owner:null, team:null, flight:0, lock:0, trail:[]};
-    effects = []; time = 0; keys.clear(); updateScore();
+    effects = []; time = 0; ballIdle = 0; suddenShown = false; keys.clear(); updateScore(); updateClock();
   }
   function updateScore() { $('blueCount').textContent = living(0).length; $('redCount').textContent = living(1).length; }
+  function updateClock() {
+    const remaining = Math.max(0, Math.ceil(MATCH_SECONDS - time));
+    $('timer').textContent = `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`;
+    $('timer').classList.toggle('urgent', remaining <= SUDDEN_DEATH_AT);
+  }
   function start() { reset(); state='playing'; $('overlay').hidden=true; $('status').textContent='ボールをひろって、Spaceで投げよう！'; last=performance.now(); canvas.focus(); }
-  function finish(team) {
+  function finish(team, timedOut = false) {
     state='ended'; keys.clear(); $('overlay').hidden=false;
-    $('message').textContent=team===0?'やったね！ あなたの勝ち！':'CPUの勝ち！ もう一度ちょうせん！';
-    $('detail').textContent='よける動きと、ボールをひろうタイミングがコツ！'; $('start').textContent='もう一度あそぶ';
-    $('status').textContent=team===0?'青チームの勝利！':'赤チームの勝利！';
+    $('message').textContent=team===null?'引き分け！ もう一回！':team===0?'やったね！ あなたの勝ち！':'CPUの勝ち！ もう一度ちょうせん！';
+    $('detail').textContent=timedOut?`時間切れ！ 青 ${living(0).length}人・赤 ${living(1).length}人で判定したよ。`:'よける動きと、ボールをひろうタイミングがコツ！'; $('start').textContent='もう一度あそぶ';
+    $('status').textContent=team===null?'引き分け！':team===0?'青チームの勝利！':'赤チームの勝利！';
   }
   function throwBall(p) {
     if (ball.owner!==p || state!=='playing') return;
@@ -39,22 +46,28 @@
     p.y=clamp(p.y,margin+R,H-margin-R);
   }
   function update(dt) {
-    time+=dt;
+    time+=dt; updateClock();
+    if(time>=MATCH_SECONDS){
+      const blue=living(0).length, red=living(1).length;
+      finish(blue===red?null:blue>red?0:1,true); return;
+    }
+    if(!suddenShown&&time>=SUDDEN_DEATH_AT){suddenShown=true;$('status').textContent='サドンデス！ あと60秒、CPUの動きがゆるやかになるよ！';}
     for (const p of players) {
       if(!p.alive) continue; p.wait=Math.max(0,p.wait-dt);
-      if(p===controlled){move(p,Number(keys.has('arrowright')||keys.has('d'))-Number(keys.has('arrowleft')||keys.has('a')),Number(keys.has('arrowdown')||keys.has('s'))-Number(keys.has('arrowup')||keys.has('w')),205,dt);continue;}
+      if(p===controlled){move(p,Number(keys.has('arrowright')||keys.has('d'))-Number(keys.has('arrowleft')||keys.has('a')),Number(keys.has('arrowdown')||keys.has('s'))-Number(keys.has('arrowup')||keys.has('w')),205,dt);if(ball.owner===p&&p.wait===0)throwBall(p);continue;}
       if(ball.owner===p){if(p.wait===0)throwBall(p);continue;}
       let tx=p.team?735:225, ty=140+(p.number-1)*140+Math.sin(time+p.phase)*42;
       const loose=!ball.owner && (ball.flight<=0 || ball.team===p.team);
       const ownHalf=p.team?ball.x>=W/2:ball.x<W/2;
       const closest=living(p.team).sort((a,b)=>distance(a,ball)-distance(b,ball))[0];
       if(loose&&ownHalf&&closest===p){tx=ball.x;ty=ball.y;}
-      if(ball.flight>0&&ball.team!==p.team&&Math.abs(ball.x-p.x)<180&&Math.abs(ball.y-p.y)<65){ty=p.y+(p.y<ball.y?-95:95);}
+      if(time<SUDDEN_DEATH_AT&&ball.flight>0&&ball.team!==p.team&&Math.abs(ball.x-p.x)<130&&Math.abs(ball.y-p.y)<45){ty=p.y+(p.y<ball.y?-95:95);}
       move(p,Math.abs(tx-p.x)>4?tx-p.x:0,Math.abs(ty-p.y)>4?ty-p.y:0,110,dt);
     }
-    if(ball.owner){ball.x=ball.owner.x+(ball.owner.team?-25:25);ball.y=ball.owner.y-7;ball.trail=[];}
+    if(ball.owner){ballIdle=0;ball.x=ball.owner.x+(ball.owner.team?-25:25);ball.y=ball.owner.y-7;ball.trail=[];}
     else {
       ball.lock=Math.max(0,ball.lock-dt);ball.flight=Math.max(0,ball.flight-dt);
+      if(ball.flight<=0){ballIdle+=dt;if(ballIdle>6){ball.x=W/2+(Math.random()<.5?-90:90);ball.y=H/2;ball.vx=ball.vy=0;ball.lock=0;ballIdle=0;$('status').textContent='ボールを中央付近に戻したよ！';}}else ballIdle=0;
       ball.x+=ball.vx*dt;ball.y+=ball.vy*dt;
       if(ball.x<margin+9||ball.x>W-margin-9){ball.x=clamp(ball.x,margin+9,W-margin-9);ball.vx*=-.65;ball.flight=0;}
       if(ball.y<margin+9||ball.y>H-margin-9){ball.y=clamp(ball.y,margin+9,H-margin-9);ball.vy*=-.65;}
