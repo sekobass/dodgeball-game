@@ -5,6 +5,9 @@
   const W = canvas.width, H = canvas.height, R = 19, margin = 32;
   const MATCH_SECONDS = 120, SUDDEN_DEATH_AT = 60;
   let ballIdle = 0, suddenShown = false;
+  const baseSpeed = () => Number($('speedSetting').value);
+  const speedMultiplier = () => time < 30 ? 1 : time < 60 ? 1.25 : time < 90 ? 1.5 : 1.7;
+  const currentBallSpeed = () => Math.round(baseSpeed() * speedMultiplier());
   const keys = new Set();
   let state = 'ready', players = [], ball, controlled, effects = [], time = 0, last = 0;
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -22,6 +25,7 @@
     const remaining = Math.max(0, Math.ceil(MATCH_SECONDS - time));
     $('timer').textContent = `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`;
     $('timer').classList.toggle('urgent', remaining <= SUDDEN_DEATH_AT);
+    $('ballSpeed').textContent = `${currentBallSpeed()} (${time < 30 ? '通常' : time < 60 ? '加速1' : time < 90 ? '加速2' : '最高速'})`;
   }
   function start() { reset(); state='playing'; $('overlay').hidden=true; $('status').textContent='ボールをひろって、Spaceで投げよう！'; last=performance.now(); canvas.focus(); }
   function finish(team, timedOut = false) {
@@ -37,7 +41,7 @@
     const angle=Math.atan2(target.y-p.y,target.x-p.x);
     ball.owner=null; ball.team=p.team; ball.flight=1.65; ball.lock=.2;
     ball.x=p.x+Math.cos(angle)*(R+12); ball.y=p.y+Math.sin(angle)*(R+12);
-    ball.vx=Math.cos(angle)*365; ball.vy=Math.sin(angle)*365;
+    const speed=currentBallSpeed(); ball.vx=Math.cos(angle)*speed; ball.vy=Math.sin(angle)*speed;
     p.wait=.8; if(p===controlled) $('status').textContent='ナイススロー！ 次のボールにそなえよう';
   }
   function move(p, dx, dy, speed, dt) {
@@ -106,6 +110,7 @@
   document.addEventListener('keydown',e=>{const k=e.key.toLowerCase();if(['arrowup','arrowdown','arrowleft','arrowright','w','a','s','d',' '].includes(k)){if(state==='playing'){e.preventDefault();keys.add(k);if(k===' '&&!e.repeat)throwBall(controlled);}}});
   document.addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));
   window.addEventListener('blur',()=>keys.clear());document.addEventListener('visibilitychange',()=>{keys.clear();last=performance.now();});
+  $('speedSetting').addEventListener('change',updateClock);
   $('start').addEventListener('click',start);$('restart').addEventListener('click',start);
   canvas.tabIndex=0;reset();
   function frame(now){const dt=Math.min((now-last)/1000,.035);last=now;if(state==='playing')update(dt);draw();requestAnimationFrame(frame);}requestAnimationFrame(frame);
