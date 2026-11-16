@@ -15,7 +15,7 @@
   const living = team => players.filter(p => p.team === team && p.alive);
   function reset() {
     players = [];
-    for (let team = 0; team < 2; team++) for (let i = 0; i < 3; i++) players.push({team, number:i+1, x:team ? 580 : 380, y:140+i*140, alive:true, wait:0, phase:i*2+team});
+    for (let team = 0; team < 2; team++) for (let i = 0; i < 3; i++) players.push({team, number:i+1, x:team ? 580 : 380, y:140+i*140, alive:true, wait:0, phase:i*2+team, dodgeDir:0, dodgeUntil:0});
     controlled = players[0];
     ball = {x:300, y:280, vx:0, vy:0, owner:null, team:null, flight:0, lock:0, trail:[]};
     effects = []; time = 0; ballIdle = 0; keys.clear(); updateScore(); updateSpeedDisplay();
@@ -46,11 +46,40 @@
     p.x=clamp(p.x,p.team?W/2+R+5:margin+R,p.team?W-margin-R:W/2-R-5);
     p.y=clamp(p.y,margin+R,H-margin-R);
   }
+  // Estimate where the ball will cross an AI player's x coordinate.
+  // Dodge early, perpendicular to its trajectory, rather than reacting to proximity.
+  function dodgeDirection(p) {
+    if(ball.owner || ball.flight<=0 || ball.team===p.team || Math.abs(ball.vx)<30) return 0;
+    const interceptTime=(p.x-ball.x)/ball.vx;
+    if(interceptTime < -0.07 || interceptTime > Math.min(1.05,ball.flight)) return 0;
+    const interceptY=ball.y+ball.vy*Math.max(0,interceptTime);
+    if(Math.abs(interceptY-p.y)>95) return 0;
+    // Choose the direction with greater clearance from the predicted flight path.
+    // Never pick a direction that runs immediately into the court boundary.
+    const bottomRoom=H-margin-R-p.y, topRoom=p.y-margin-R;
+    if(interceptY>=p.y && topRoom>35) return -1;
+    if(interceptY<p.y && bottomRoom>35) return 1;
+    return bottomRoom>topRoom?1:-1;
+  }
+  function evade(p,dt) {
+    const direction=dodgeDirection(p);
+    if(direction){
+      p.dodgeDir=direction;
+      p.dodgeUntil=time+0.32;
+    }
+    if(ball.flight<=0 || ball.team===p.team) p.dodgeUntil=0;
+    if(time>=p.dodgeUntil) return false;
+    const safetyX=p.team?W/2+R+125:W/2-R-125;
+    // Diagonal retreat creates reaction distance from the center line.
+    move(p,safetyX-p.x,p.dodgeDir*270,265,dt);
+    return true;
+  }
   function update(dt) {
     time+=dt; updateSpeedDisplay();
     for (const p of players) {
       if(!p.alive) continue; p.wait=Math.max(0,p.wait-dt);
       if(p===controlled){move(p,Number(keys.has('arrowright')||keys.has('d'))-Number(keys.has('arrowleft')||keys.has('a')),Number(keys.has('arrowdown')||keys.has('s'))-Number(keys.has('arrowup')||keys.has('w')),205,dt);continue;}
+      if(evade(p,dt)) continue;
       if(ball.owner===p){
         // CPU runs up to the center line and aims before throwing.
         const target=living(1-p.team).sort((a,b)=>distance(p,a)-distance(p,b))[0];
@@ -63,13 +92,13 @@
         continue;
       }
       // Stay close to the center line, instead of waiting deep in the back court.
-      let tx=p.team?W/2+R+34:W/2-R-34;
+      const enemyHasBall=ball.owner && ball.owner.team!==p.team;
+      let tx=p.team?W/2+R+(enemyHasBall?130:34):W/2-R-(enemyHasBall?130:34);
       let ty=140+(p.number-1)*140+Math.sin(time*1.2+p.phase)*30;
       const loose=!ball.owner && (ball.flight<=0 || ball.team===p.team);
       const ownHalf=p.team?ball.x>=W/2:ball.x<W/2;
       const closest=living(p.team).sort((a,b)=>distance(a,ball)-distance(b,ball))[0];
       if(loose&&ownHalf&&closest===p){tx=ball.x;ty=ball.y;}
-      if(ball.flight>0&&ball.team!==p.team&&Math.abs(ball.x-p.x)<110&&Math.abs(ball.y-p.y)<40){ty=p.y+(p.y<ball.y?-95:95);}
       move(p,Math.abs(tx-p.x)>4?tx-p.x:0,Math.abs(ty-p.y)>4?ty-p.y:0,150,dt);
     }
     if(ball.owner){ballIdle=0;ball.x=ball.owner.x+(ball.owner.team?-25:25);ball.y=ball.owner.y-7;ball.trail=[];}
