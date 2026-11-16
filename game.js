@@ -15,7 +15,7 @@
   const living = team => players.filter(p => p.team === team && p.alive);
   function reset() {
     players = [];
-    for (let team = 0; team < 2; team++) for (let i = 0; i < 3; i++) players.push({team, number:i+1, x:team ? 735 : 225, y:140+i*140, alive:true, wait:0, phase:i*2+team});
+    for (let team = 0; team < 2; team++) for (let i = 0; i < 3; i++) players.push({team, number:i+1, x:team ? 580 : 380, y:140+i*140, alive:true, wait:0, phase:i*2+team});
     controlled = players[0];
     ball = {x:300, y:280, vx:0, vy:0, owner:null, team:null, flight:0, lock:0, trail:[]};
     effects = []; time = 0; ballIdle = 0; keys.clear(); updateScore(); updateSpeedDisplay();
@@ -56,17 +56,21 @@
         const target=living(1-p.team).sort((a,b)=>distance(p,a)-distance(p,b))[0];
         const lineX=p.team?W/2+R+8:W/2-R-8;
         const targetY=target?clamp(target.y,margin+R,H-margin-R):p.y;
-        move(p,lineX-p.x,targetY-p.y,135,dt);
-        if(Math.abs(p.x-lineX)<5 && Math.abs(p.y-targetY)<45 && p.wait===0)throwBall(p);
+        // Prioritize approaching the line so a changing target cannot hold the thrower back.
+        const dx=lineX-p.x;
+        move(p,Math.abs(dx)>4?dx:0,Math.abs(dx)>4?0:targetY-p.y,175,dt);
+        if(Math.abs(p.x-lineX)<5 && p.wait===0)throwBall(p);
         continue;
       }
-      let tx=p.team?735:225, ty=140+(p.number-1)*140+Math.sin(time+p.phase)*42;
+      // Stay close to the center line, instead of waiting deep in the back court.
+      let tx=p.team?W/2+R+34:W/2-R-34;
+      let ty=140+(p.number-1)*140+Math.sin(time*1.2+p.phase)*30;
       const loose=!ball.owner && (ball.flight<=0 || ball.team===p.team);
       const ownHalf=p.team?ball.x>=W/2:ball.x<W/2;
       const closest=living(p.team).sort((a,b)=>distance(a,ball)-distance(b,ball))[0];
       if(loose&&ownHalf&&closest===p){tx=ball.x;ty=ball.y;}
       if(ball.flight>0&&ball.team!==p.team&&Math.abs(ball.x-p.x)<110&&Math.abs(ball.y-p.y)<40){ty=p.y+(p.y<ball.y?-95:95);}
-      move(p,Math.abs(tx-p.x)>4?tx-p.x:0,Math.abs(ty-p.y)>4?ty-p.y:0,110,dt);
+      move(p,Math.abs(tx-p.x)>4?tx-p.x:0,Math.abs(ty-p.y)>4?ty-p.y:0,150,dt);
     }
     if(ball.owner){ballIdle=0;ball.x=ball.owner.x+(ball.owner.team?-25:25);ball.y=ball.owner.y-7;ball.trail=[];}
     else {
