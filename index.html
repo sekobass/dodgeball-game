@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ドッジボールゲーム</title><link rel="stylesheet" href="style.css"><script src="game.js" defer></script></head>
+<body><main>
+<header><span class="badge">あそぼう！ / Ver.0.1</span><h1>ドッジボールゲーム</h1><p>よけて、ひろって、ねらって投げよう！</p></header>
+<section class="score" aria-label="残り人数"><strong class="blue">あなたのチーム <span id="blueCount">3</span> 人</strong><span>VS</span><strong class="red">CPUチーム <span id="redCount">3</span> 人</strong></section>
+<div class="arena"><canvas id="court" width="960" height="560" aria-label="左が青チーム、右が赤チームのドッジボールコート"></canvas><div id="overlay"><h2 id="message">さあ、ドッジボール！</h2><p id="detail">青いリングの選手を動かそう。味方もいっしょに戦うよ！</p><button id="start">スタート</button></div></div>
+<p id="status" role="status" aria-live="polite">スタートを押してはじめよう</p>
+<section class="help"><p><kbd>↑ ↓ ← →</kbd> / <kbd>W A S D</kbd> 移動</p><p><kbd>Space</kbd> 自動でねらって投げる</p><p>ボールに近づくと自動でひろう</p></section>
+<footer>青いリング＝操作中　・　黄色いリング＝ボールを持っている選手<br>相手を3人アウトにしたら勝ち！ 操作中の選手がアウトになると味方に交代するよ。</footer>
+<button id="restart" class="secondary">はじめから</button>
+</main></body></html>
