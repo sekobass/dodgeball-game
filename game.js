@@ -412,7 +412,7 @@
       if (event.repeat) return;
       if (key === 'c') {
         if (ball.shot?.kind === 'attack' && ball.shot.from.team !== controlled.team && time >= controlled.nextCatch) {
-          controlled.catchUntil = time + .25;
+          controlled.catchUntil = time + Number($('catchSetting').value);
           controlled.nextCatch = time + 1;
         }
       } else {
