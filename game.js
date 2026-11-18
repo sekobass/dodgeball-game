@@ -6,6 +6,9 @@
   const center = W / 2;
   const leftEnd = 165, rightEnd = W - leftEnd;
   const top = margin + R, bottom = H - margin - R;
+  const innerTop = 140, innerBottom = H - innerTop;
+  const throwLeftThird = margin + (W - 2 * margin) / 3;
+  const throwRightThird = W - throwLeftThird;
   const ballRadius = 10;
   const keys = new Set();
   let state = 'ready', players = [], ball, controlled, effects = [], time = 0, last = 0;
@@ -17,8 +20,8 @@
   const baseSpeed = () => Number($('speedSetting').value);
   const cpuModes = {
     easy: {dodge:0.25, move:0.80, hold:1.6, aim:0.20},
-    normal: {dodge:0.65, move:1.00, hold:1.0, aim:0.09},
-    hard: {dodge:0.95, move:1.22, hold:0.6, aim:0.025}
+    normal: {dodge:1.00, move:1.00, hold:1.0, aim:0},
+    hard: {dodge:1.00, move:1.22, hold:0.6, aim:0}
   };
   const cpuMode = () => cpuModes[$('cpuDifficulty').value] || cpuModes.normal;
   const speedLevel = () => Math.min(12, Math.floor(time / 10));
@@ -31,7 +34,30 @@
     if (p.zone === 'infield') {
       return p.team ? [frontX(1, 5), rightEnd - R] : [leftEnd + R, frontX(0, 5)];
     }
-    return p.team ? [margin + R, leftEnd - R] : [rightEnd + R, W - margin - R];
+    return p.team ? [center + R, W - margin - R] : [margin + R, center - R];
+  }
+
+  const sideX = team => team ? rightEnd + R + 12 : leftEnd - R - 12;
+  const outfieldPart = (p, x = p.x, y = p.y) => {
+    if (p.zone === 'infield') return null;
+    const side = p.team ? x >= rightEnd + R : x <= leftEnd - R;
+    if (side) return 'side';
+    if (y <= innerTop - R) return 'top';
+    if (y >= innerBottom + R) return 'bottom';
+    return null;
+  };
+  function legalOutfieldThrow(p) {
+    if (p.zone === 'infield') return true;
+    if (outfieldPart(p) === 'side') return true;
+    return p.team ? p.x >= throwRightThird : p.x <= throwLeftThird;
+  }
+  function outsidePointForTeam(team, x, y) {
+    if (team === 1) {
+      if (x < center + R || x > W - margin - R) return false;
+      return x >= rightEnd + R || y <= innerTop - R || y >= innerBottom + R;
+    }
+    if (x < margin + R || x > center - R) return false;
+    return x <= leftEnd - R || y <= innerTop - R || y >= innerBottom + R;
   }
 
   function nearest(point, candidates) {
@@ -41,12 +67,11 @@
   function reset() {
     players = [];
     for (const team of [0, 1]) {
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 4; i++) {
         const p = {team, number:i + 1, zone:i < 3 ? 'infield' : 'starter', wait:0,
           phase:i * 2 + team, dodgeDir:0, dodgeUntil:0, lastThreat:null, dodgeEnabled:false, catchUntil:0, nextCatch:0};
-        const [minX, maxX] = horizontalBounds(p);
-        p.x = i < 3 ? frontX(team, 81) : (minX + maxX) / 2;
-        p.y = i < 3 ? 140 + i * 140 : 175 + (i - 3) * 210;
+        p.x = i < 3 ? frontX(team, 81) : sideX(team);
+        p.y = i < 3 ? 184 + i * 92 : H / 2;
         players.push(p);
       }
     }
@@ -107,7 +132,8 @@
     if (!p || ball.owner !== p || state !== 'playing') return false;
     if (!canTarget(p, target, kind)) return false;
     const [minX, maxX] = horizontalBounds(p);
-    if (p.x < minX || p.x > maxX || p.y < top || p.y > bottom) return false;
+    if (p.x < minX || p.x > maxX || p.y < (p.zone === 'infield' ? innerTop + R : top) ||
+        p.y > (p.zone === 'infield' ? innerBottom - R : bottom) || !legalOutfieldThrow(p)) return false;
     const length = distance(p, target);
     const speed = currentBallSpeed();
     ball.owner = null;
@@ -129,15 +155,49 @@
   }
 
   function move(p, dx, dy, speed, dt) {
-    const length = Math.hypot(dx, dy);
+    let tx = p.x + dx, ty = p.y + dy;
+    if (p.zone !== 'infield') {
+      const [minX, maxX] = horizontalBounds(p);
+      tx = clamp(tx, minX, maxX);
+      ty = clamp(ty, top, bottom);
+      // Follow the U-shaped corridor instead of cutting through the infield.
+      const destination = outsidePointForTeam(p.team, tx, ty)
+        ? (ty <= innerTop - R ? 'top' : ty >= innerBottom + R ? 'bottom' : 'side')
+        : 'side';
+      if (!outsidePointForTeam(p.team, tx, ty)) tx = sideX(p.team);
+      const current = outfieldPart(p);
+      if (current === 'top' && destination !== 'top' ||
+          current === 'bottom' && destination !== 'bottom') {
+        if (Math.abs(p.x - sideX(p.team)) > 1) {
+          tx = sideX(p.team); ty = p.y;
+        }
+      } else if (current === 'side' && destination !== 'side') {
+        if (destination === 'top' && p.y > innerTop - R ||
+            destination === 'bottom' && p.y < innerBottom + R) tx = sideX(p.team);
+      }
+      // Crossing between upper and lower corridors must also use the side lane.
+      if ((current === 'top' && destination === 'bottom') ||
+          (current === 'bottom' && destination === 'top')) {
+        tx = sideX(p.team);
+        if (Math.abs(p.x - tx) > 1) ty = p.y;
+      }
+    }
+    const length = Math.hypot(tx - p.x, ty - p.y);
     if (length > 0) {
       const step = Math.min(length, speed * dt) / length;
-      p.x += dx * step;
-      p.y += dy * step;
+      p.x += (tx - p.x) * step;
+      p.y += (ty - p.y) * step;
     }
     const [minX, maxX] = horizontalBounds(p);
     p.x = clamp(p.x, minX, maxX);
-    p.y = clamp(p.y, top, bottom);
+    p.y = clamp(p.y, p.zone === 'infield' ? innerTop + R : top,
+      p.zone === 'infield' ? innerBottom - R : bottom);
+    if (p.zone !== 'infield' && !outsidePointForTeam(p.team, p.x, p.y)) {
+      // Any diagonal rounding at a corner is kept in the nearest legal lane.
+      if (Math.abs(p.x - sideX(p.team)) < Math.abs(p.y - (p.y < H / 2 ? innerTop - R : innerBottom + R)))
+        p.x = p.team ? Math.max(p.x, rightEnd + R) : Math.min(p.x, leftEnd - R);
+      else p.y = p.y < H / 2 ? Math.min(p.y, innerTop - R) : Math.max(p.y, innerBottom + R);
+    }
   }
 
   // Predict where an attack crosses the defender's x coordinate.
@@ -147,9 +207,9 @@
     if (interceptTime < -.07 || interceptTime > Math.min(1.05, ball.flight)) return 0;
     const interceptY = ball.y + ball.vy * Math.max(0, interceptTime);
     if (Math.abs(interceptY - p.y) > 95) return 0;
-    if (interceptY >= p.y && p.y - top > 35) return -1;
-    if (interceptY < p.y && bottom - p.y > 35) return 1;
-    return bottom - p.y > p.y - top ? 1 : -1;
+    if (interceptY >= p.y && p.y - (innerTop + R) > 35) return -1;
+    if (interceptY < p.y && (innerBottom - R) - p.y > 35) return 1;
+    return (innerBottom - R) - p.y > p.y - (innerTop + R) ? 1 : -1;
   }
 
   function evade(p, dt) {
@@ -187,6 +247,12 @@
       }
     }
     if (p.wait > 0) return;
+    // The middle third of the upper/lower outer lanes is catch/move only.
+    if (p.zone !== 'infield' && !legalOutfieldThrow(p)) {
+      const tx = p.team ? throwRightThird + R + 5 : throwLeftThird - R - 5;
+      move(p, tx - p.x, 0, 180 * (p.team ? cpuMode().move : 1), dt);
+      return;
+    }
     const opponent = selectTarget(p, 'attack');
     const teammate = selectTarget(p, 'pass');
     if (!opponent) return;
@@ -202,8 +268,11 @@
 
   function looseBallCandidates() {
     if (ball.owner || ball.shot) return [];
-    const team = ball.x < leftEnd || (ball.x >= center && ball.x <= rightEnd) ? 1 : 0;
-    return ball.x < leftEnd || ball.x > rightEnd ? outfield(team) : infield(team);
+    if (ball.y >= innerTop && ball.y <= innerBottom &&
+        ball.x >= leftEnd && ball.x <= rightEnd) {
+      return infield(ball.x < center ? 0 : 1);
+    }
+    return outfield(ball.x < center ? 1 : 0);
   }
 
   function moveAI(p, chaser, dt) {
@@ -225,11 +294,11 @@
       tx = frontX(p.team, defending ? 130 : 34);
       ty = 140 + (p.number - 1) * 140 + Math.sin(time * 1.2 + p.phase) * 30;
     } else {
-      const teammates = outfield(p.team);
-      const lane = teammates.indexOf(p) + 1;
-      const [minX, maxX] = horizontalBounds(p);
-      tx = (minX + maxX) / 2 + 13 * Math.sin(time * .9 + p.phase);
-      ty = top + (bottom - top) * lane / (teammates.length + 1) + (ball.y - H / 2) * .16;
+      // Patrol all three arms of the U, not only the endline.
+      const patrol = (Math.floor(time / 7 + p.phase / 4) % 3);
+      tx = patrol === 0 ? sideX(p.team)
+        : (p.team ? throwRightThird + 40 : throwLeftThird - 40);
+      ty = patrol === 1 ? top + 8 : patrol === 2 ? bottom - 8 : H / 2;
     }
     move(p, tx - p.x, ty - p.y, 150 * aiSpeed, dt);
   }
@@ -260,8 +329,8 @@
   function hitPlayer(p, thrower) {
     effects.push({x:p.x, y:p.y, life:.6});
     p.zone = 'returning';
-    const [minX, maxX] = horizontalBounds(p);
-    p.x = (minX + maxX) / 2;
+    p.x = sideX(p.team);
+    p.y = clamp(p.y, top, bottom);
     p.catchUntil = 0;
     stopFlight(.3, .3);
 
@@ -269,7 +338,7 @@
       thrower.zone = 'infield';
       const [min, max] = horizontalBounds(thrower);
       thrower.x = (min + max) / 2;
-      thrower.y = 140 + (thrower.number - 1) * 140;
+      thrower.y = 184 + (thrower.number - 1) * 92;
       $('status').textContent = teamName(thrower.team) + 'チームの選手が内野に復帰！';
     }
     if (p === controlled) {
@@ -299,7 +368,10 @@
     let contact = 1;
     let hit = null;
     for (const p of players) {
-      const eligible = kind === 'pass' ? p === target || canTarget(from, p, 'attack') : canTarget(from, p, kind);
+      const eligible = kind === 'pass'
+        ? p === target || canTarget(from, p, 'attack')
+        : canTarget(from, p, 'attack') || (p !== from && p.zone !== 'infield') ||
+          (from.zone !== 'infield' && p.team === from.team && p.zone === 'infield');
       if (!eligible) continue;
       const along = contactTime(p, dx, dy);
       if (along <= contact) {
@@ -310,11 +382,13 @@
     ball.x += dx * contact;
     ball.y += dy * contact;
     if (hit) {
-      const caught = hit === controlled && hit.catchUntil > time;
-      if (kind === 'pass' || caught) {
+      const manualCatch = hit === controlled && hit.catchUntil > time;
+      const safeCatch = hit.zone !== 'infield' ||
+        (from.team === hit.team && from.zone !== 'infield');
+      if (kind === 'pass' || manualCatch || safeCatch) {
         hit.catchUntil = 0;
-        takeBall(hit, kind === 'pass' && hit === target);
-        if (caught) $('status').textContent = 'キャッチ成功！ Spaceで投球・Pでパス';
+        takeBall(hit, kind === 'pass' && hit === target || safeCatch);
+        if (manualCatch || safeCatch) $('status').textContent = 'キャッチ成功！ Spaceで投球・Pでパス';
       } else hitPlayer(hit, from);
       return;
     }
@@ -365,28 +439,39 @@
     effects = effects.filter(e => (e.life -= dt) > 0);
   }
   function draw() {
-    ctx.clearRect(0,0,W,H);ctx.fillStyle='#21576a';ctx.fillRect(0,0,W,H);
-    for (const [x, width, color, label] of [
-      [margin, leftEnd - margin, '#773d4e', '赤 外野'],
-      [leftEnd, center - leftEnd, '#286e88', '青 内野'],
-      [center, rightEnd - center, '#68556b', '赤 内野'],
-      [rightEnd, W - margin - rightEnd, '#194d70', '青 外野']
-    ]) {
-      ctx.fillStyle = color;
-      ctx.fillRect(x, margin, width, H - 2 * margin);
-      ctx.fillStyle = '#eef7ff';
-      ctx.font = 'bold 15px system-ui';
-      ctx.textAlign = 'center';
-      ctx.fillText(label, x + width / 2, margin - 9);
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#21576a';ctx.fillRect(0,0,W,H);
+    // Red outfield wraps the blue infield; blue outfield wraps red.
+    ctx.fillStyle='#7c3e51';ctx.fillRect(margin,margin,center-margin,H-2*margin);
+    ctx.fillStyle='#1d567c';ctx.fillRect(center,margin,W-margin-center,H-2*margin);
+    ctx.fillStyle='#286e88';ctx.fillRect(leftEnd,innerTop,center-leftEnd,innerBottom-innerTop);
+    ctx.fillStyle='#68556b';ctx.fillRect(center,innerTop,rightEnd-center,innerBottom-innerTop);
+    // Top/bottom central area: move and catch, but no outfield attacks.
+    ctx.fillStyle='#132d403f';
+    for(const yy of [margin,innerBottom]){
+      ctx.fillRect(throwLeftThird,yy,center-throwLeftThird,innerTop-margin);
+      ctx.fillRect(center,yy,throwRightThird-center,innerTop-margin);
     }
-    ctx.strokeStyle='#dfebee';ctx.lineWidth=3;ctx.strokeRect(margin,margin,W-2*margin,H-2*margin);
-    ctx.beginPath();
-    for (const x of [leftEnd, center, rightEnd]) {
-      ctx.moveTo(x, margin);
-      ctx.lineTo(x, H - margin);
+    ctx.strokeStyle='#dfebee';ctx.lineWidth=3;
+    ctx.strokeRect(margin,margin,W-2*margin,H-2*margin);
+    ctx.beginPath();ctx.moveTo(center,margin);ctx.lineTo(center,H-margin);ctx.stroke();
+    ctx.setLineDash([9,5]);ctx.strokeStyle='#ffe46b';ctx.lineWidth=3;
+    ctx.strokeRect(leftEnd,innerTop,rightEnd-leftEnd,innerBottom-innerTop);
+    ctx.setLineDash([]);
+    ctx.strokeStyle='#ff7777';ctx.lineWidth=4;ctx.beginPath();
+    for(const xx of [throwLeftThird,throwRightThird]){
+      ctx.moveTo(xx,margin);ctx.lineTo(xx,innerTop);
+      ctx.moveTo(xx,innerBottom);ctx.lineTo(xx,H-margin);
     }
     ctx.stroke();
-    ctx.globalAlpha=.25;ctx.beginPath();ctx.arc(W/2,H/2,72,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;
+    ctx.fillStyle='#eaf6ff';ctx.font='bold 15px system-ui';ctx.textAlign='center';
+    ctx.fillText('赤 外野',leftEnd-55,H/2);ctx.fillText('青 外野',rightEnd+55,H/2);
+    ctx.fillText('赤 外野',leftEnd+35,margin+25);ctx.fillText('青 外野',rightEnd-35,margin+25);
+    ctx.fillText('青 内野',leftEnd+120,innerTop+25);ctx.fillText('赤 内野',rightEnd-120,innerTop+25);
+    ctx.font='bold 12px system-ui';
+    ctx.fillText('投球不可',center-60,margin+26);ctx.fillText('投球不可',center+60,margin+26);
+    ctx.fillText('投球不可',center-60,H-margin-15);ctx.fillText('投球不可',center+60,H-margin-15);
+    ctx.strokeStyle='#dfebee';ctx.lineWidth=2;ctx.globalAlpha=.35;ctx.beginPath();ctx.arc(center,H/2,52,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;
     for (const p of players) {
       ctx.fillStyle='#102e3d55';ctx.beginPath();ctx.ellipse(p.x,p.y+18,22,9,0,0,Math.PI*2);ctx.fill();
       if (p === controlled || ball.owner === p) {
