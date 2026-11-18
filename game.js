@@ -191,9 +191,12 @@
     const teammate = selectTarget(p, 'pass');
     if (!opponent) return;
     // A receiver attacks next, preventing AI teammates from passing back and forth.
-    const pass = teammate && !ball.receivedPass && p.zone !== 'returning' &&
-      (p.zone === 'starter' ? distance(p, opponent) > 205 :
-        distance(p, opponent) > 145 && Math.abs(teammate.y - opponent.y) > 85);
+    // Outfield prioritizes fast attacks. It still sometimes returns a loose
+    // ball to an infield teammate, but never keeps passing back and forth.
+    const pass = teammate && !ball.receivedPass &&
+      (p.zone !== 'infield'
+        ? (p.zone === 'starter' && Math.random() < .15)
+        : distance(p, opponent) > 145 && Math.abs(teammate.y - opponent.y) > 85);
     throwBall(p, pass ? 'pass' : 'attack', pass ? teammate : opponent);
   }
 
@@ -246,7 +249,11 @@
     ball.owner = p;
     ball.receivedPass = receivedPass;
     ballIdle = 0;
-    p.wait = (1.1 + Math.random() * .6) * (p.team === 1 ? cpuMode().hold : 1);
+    // Outfield players release quickly regardless of CPU difficulty.
+    // Infield timing continues to follow the existing difficulty settings.
+    p.wait = p.zone === 'infield'
+      ? (1.1 + Math.random() * .6) * (p.team === 1 ? cpuMode().hold : 1)
+      : .25 + Math.random() * .15;
     if (p === controlled) $('status').textContent = 'ボールを持っているよ！ Spaceで投球・Pでパス';
   }
 
