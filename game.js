@@ -77,7 +77,7 @@
     }
     controlled = players[0];
     ball = {x:leftEnd + 95, y:H / 2, vx:0, vy:0, owner:null, shot:null, flight:0,
-      lock:0, trail:[], receivedPass:false};
+      lock:0, trail:[], receivedPass:false, looseOutfieldAttackFrom:null};
     effects = [];
     time = 0;
     ballIdle = 0;
@@ -149,6 +149,7 @@
     ball.vy = Math.sin(angle) * speed;
     ball.trail = [];
     ball.receivedPass = false;
+    ball.looseOutfieldAttackFrom = null;
     p.wait = .8;
     if (p === controlled) $('status').textContent = kind === 'pass' ? '外野へパス！' : 'ナイススロー！';
     return true;
@@ -316,6 +317,7 @@
     stopFlight(0, 0);
     ball.owner = p;
     ball.receivedPass = receivedPass;
+    ball.looseOutfieldAttackFrom = null;
     ballIdle = 0;
     // Outfield players release quickly regardless of CPU difficulty.
     // Infield timing continues to follow the existing difficulty settings.
@@ -427,6 +429,7 @@
         return;
       }
       stopFlight(0, .15);
+      ball.looseOutfieldAttackFrom = kind === 'attack' && from.zone !== 'infield' ? from : null;
     }
     ball.x = x;
     ball.y = y;
@@ -449,7 +452,11 @@
     ball.lock = Math.max(0, ball.lock - dt);
     if (ball.lock > 0) return;
     const p = nearest(ball, looseBallCandidates());
-    if (p && distance(p, ball) <= R + ballRadius) takeBall(p);
+    if (p && distance(p, ball) <= R + ballRadius) {
+      if (p.zone !== 'infield' && ball.looseOutfieldAttackFrom?.team === p.team) {
+        giveTurnoverBall(ball.looseOutfieldAttackFrom);
+      } else takeBall(p);
+    }
   }
 
   function update(dt) {
