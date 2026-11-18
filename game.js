@@ -77,7 +77,7 @@
     }
     controlled = players[0];
     ball = {x:leftEnd + 95, y:H / 2, vx:0, vy:0, owner:null, shot:null, flight:0,
-      lock:0, trail:[], receivedPass:false, looseOutfieldAttackFrom:null};
+      lock:0, trail:[], receivedPass:false, looseOutfieldAttackFrom:null, pendingTurnover:null};
     effects = [];
     time = 0;
     ballIdle = 0;
@@ -150,6 +150,7 @@
     ball.trail = [];
     ball.receivedPass = false;
     ball.looseOutfieldAttackFrom = null;
+    ball.pendingTurnover = null;
     p.wait = .8;
     if (p === controlled) $('status').textContent = kind === 'pass' ? '外野へパス！' : 'ナイススロー！';
     return true;
@@ -267,7 +268,7 @@
   }
 
   function looseBallCandidates() {
-    if (ball.owner || ball.shot) return [];
+    if (ball.owner || ball.shot || ball.pendingTurnover) return [];
     if (ball.y >= innerTop && ball.y <= innerBottom &&
         ball.x >= leftEnd && ball.x <= rightEnd) {
       return infield(ball.x < center ? 0 : 1);
@@ -318,6 +319,7 @@
     ball.owner = p;
     ball.receivedPass = receivedPass;
     ball.looseOutfieldAttackFrom = null;
+    ball.pendingTurnover = null;
     ballIdle = 0;
     // Outfield players release quickly regardless of CPU difficulty.
     // Infield timing continues to follow the existing difficulty settings.
@@ -369,14 +371,30 @@
   }
 
   function giveTurnoverBall(thrower) {
-    // Give a missed outfield attack to the other team's infield.
-    const opponent = 1 - thrower.team;
-    const receiver = nearest(ball, infield(opponent));
+    // First show the dead ball where it landed for half a second.
+    // No team may collect or throw it while the turnover is pending.
+    if (ball.pendingTurnover) return;
+    stopFlight(0, 0);
+    ball.owner = null;
+    ball.x = clamp(ball.x, margin + ballRadius, W - margin - ballRadius);
+    ball.y = clamp(ball.y, margin + ballRadius, H - margin - ballRadius);
+    ball.vx = 0;
+    ball.vy = 0;
+    ball.looseOutfieldAttackFrom = null;
+    ball.pendingTurnover = {team:1 - thrower.team, remaining:.5};
+    ballIdle = 0;
+    $('status').textContent = '外野の球が落ちた！ 0.5秒後に相手ボール';
+  }
+
+  function finishTurnoverBall() {
+    const pending = ball.pendingTurnover;
+    if (!pending) return;
+    const receiver = nearest(ball, infield(pending.team));
     if (receiver) {
       takeBall(receiver);
-      $('status').textContent = '外野の投球が無効になったため、' + teamName(opponent) + 'チームのボール！';
+      $('status').textContent = '外野の投球が無効になったため、' + teamName(pending.team) + 'チームのボール！';
     } else {
-      stopFlight(0, 0);
+      ball.pendingTurnover = null;
     }
   }
 
@@ -436,6 +454,7 @@
   }
 
   function moveLooseBall(dt) {
+    if (ball.pendingTurnover) return;
     ballIdle += dt;
     if (ballIdle >= 6) {
       ball.x = center + (Math.random() < .5 ? -90 : 90);
@@ -462,6 +481,12 @@
   function update(dt) {
     time += dt;
     updateSpeedDisplay();
+    if (ball.pendingTurnover) {
+      ball.pendingTurnover.remaining -= dt;
+      if (ball.pendingTurnover.remaining <= 0) finishTurnoverBall();
+      effects = effects.filter(e => (e.life -= dt) > 0);
+      return;
+    }
     const chaser = nearest(ball, looseBallCandidates().filter(p => p !== controlled));
     for (const p of players) {
       p.wait = Math.max(0, p.wait - dt);
