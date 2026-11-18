@@ -4,9 +4,9 @@
   const $ = id => document.getElementById(id);
   const W = canvas.width, H = canvas.height, R = 19, margin = 32;
   const center = W / 2;
-  const leftEnd = 165, rightEnd = W - leftEnd;
+  const leftEnd = 122, rightEnd = W - leftEnd;
   const top = margin + R, bottom = H - margin - R;
-  const innerTop = 140, innerBottom = H - innerTop;
+  const innerTop = 112, innerBottom = H - innerTop;
   const throwLeftThird = margin + (W - 2 * margin) / 3;
   const throwRightThird = W - throwLeftThird;
   const ballRadius = 10;
@@ -28,36 +28,36 @@
   const speedMultiplier = () => 1 + speedLevel() / 6;
   const currentBallSpeed = () => Math.round(baseSpeed() * speedMultiplier());
   const teamName = team => team === 0 ? '青' : '赤';
+  const leftOutfieldTeam = 1;
+  const outfieldOnLeft = team => team === leftOutfieldTeam;
   const frontX = (team, inset) => center + (team ? 1 : -1) * (R + inset);
 
   function horizontalBounds(p) {
     if (p.zone === 'infield') {
       return p.team ? [frontX(1, 5), rightEnd - R] : [leftEnd + R, frontX(0, 5)];
     }
-    return p.team ? [center + R, W - margin - R] : [margin + R, center - R];
+    return outfieldOnLeft(p.team) ? [margin + R, center - R] : [center + R, W - margin - R];
   }
 
-  const sideX = team => team ? rightEnd + R + 12 : leftEnd - R - 12;
-  const outfieldPart = (p, x = p.x, y = p.y) => {
+  const sideX = team => outfieldOnLeft(team) ? leftEnd - R - 12 : rightEnd + R + 12;
+  const sideBoundary = team => outfieldOnLeft(team) ? leftEnd - R : rightEnd + R;
+
+  function outfieldPart(p, x = p.x, y = p.y) {
     if (p.zone === 'infield') return null;
-    const side = p.team ? x >= rightEnd + R : x <= leftEnd - R;
-    if (side) return 'side';
+    const [minX, maxX] = horizontalBounds(p);
+    if (x < minX || x > maxX || y < top || y > bottom) return null;
+    const edge = sideBoundary(p.team);
+    if (outfieldOnLeft(p.team) ? x <= edge : x >= edge) return 'side';
     if (y <= innerTop - R) return 'top';
     if (y >= innerBottom + R) return 'bottom';
     return null;
-  };
+  }
+
   function legalOutfieldThrow(p) {
     if (p.zone === 'infield') return true;
-    if (outfieldPart(p) === 'side') return true;
-    return p.team ? p.x >= throwRightThird : p.x <= throwLeftThird;
-  }
-  function outsidePointForTeam(team, x, y) {
-    if (team === 1) {
-      if (x < center + R || x > W - margin - R) return false;
-      return x >= rightEnd + R || y <= innerTop - R || y >= innerBottom + R;
-    }
-    if (x < margin + R || x > center - R) return false;
-    return x <= leftEnd - R || y <= innerTop - R || y >= innerBottom + R;
+    const part = outfieldPart(p);
+    return part === 'side' || (part !== null &&
+      (outfieldOnLeft(p.team) ? p.x <= throwLeftThird : p.x >= throwRightThird));
   }
 
   function nearest(point, candidates) {
@@ -161,10 +161,9 @@
       tx = clamp(tx, minX, maxX);
       ty = clamp(ty, top, bottom);
       // Follow the U-shaped corridor instead of cutting through the infield.
-      const destination = outsidePointForTeam(p.team, tx, ty)
-        ? (ty <= innerTop - R ? 'top' : ty >= innerBottom + R ? 'bottom' : 'side')
-        : 'side';
-      if (!outsidePointForTeam(p.team, tx, ty)) tx = sideX(p.team);
+      const targetPart = outfieldPart(p, tx, ty);
+      const destination = targetPart ?? 'side';
+      if (!targetPart) tx = sideBoundary(p.team);
       const current = outfieldPart(p);
       if (current === 'top' && destination !== 'top' ||
           current === 'bottom' && destination !== 'bottom') {
@@ -192,10 +191,10 @@
     p.x = clamp(p.x, minX, maxX);
     p.y = clamp(p.y, p.zone === 'infield' ? innerTop + R : top,
       p.zone === 'infield' ? innerBottom - R : bottom);
-    if (p.zone !== 'infield' && !outsidePointForTeam(p.team, p.x, p.y)) {
+    if (p.zone !== 'infield' && !outfieldPart(p)) {
       // Any diagonal rounding at a corner is kept in the nearest legal lane.
       if (Math.abs(p.x - sideX(p.team)) < Math.abs(p.y - (p.y < H / 2 ? innerTop - R : innerBottom + R)))
-        p.x = p.team ? Math.max(p.x, rightEnd + R) : Math.min(p.x, leftEnd - R);
+        p.x = sideBoundary(p.team);
       else p.y = p.y < H / 2 ? Math.min(p.y, innerTop - R) : Math.max(p.y, innerBottom + R);
     }
   }
@@ -249,7 +248,7 @@
     if (p.wait > 0) return;
     // The middle third of the upper/lower outer lanes is catch/move only.
     if (p.zone !== 'infield' && !legalOutfieldThrow(p)) {
-      const tx = p.team ? throwRightThird + R + 5 : throwLeftThird - R - 5;
+      const tx = outfieldOnLeft(p.team) ? throwLeftThird - R - 5 : throwRightThird + R + 5;
       move(p, tx - p.x, 0, 180 * (p.team ? cpuMode().move : 1), dt);
       return;
     }
@@ -272,7 +271,7 @@
         ball.x >= leftEnd && ball.x <= rightEnd) {
       return infield(ball.x < center ? 0 : 1);
     }
-    return outfield(ball.x < center ? 1 : 0);
+    return outfield(ball.x < center ? leftOutfieldTeam : 1 - leftOutfieldTeam);
   }
 
   function moveAI(p, chaser, dt) {
@@ -297,7 +296,7 @@
       // Patrol all three arms of the U, not only the endline.
       const patrol = (Math.floor(time / 7 + p.phase / 4) % 3);
       tx = patrol === 0 ? sideX(p.team)
-        : (p.team ? throwRightThird + 40 : throwLeftThird - 40);
+        : (outfieldOnLeft(p.team) ? throwLeftThird - 40 : throwRightThird + 40);
       ty = patrol === 1 ? top + 8 : patrol === 2 ? bottom - 8 : H / 2;
     }
     move(p, tx - p.x, ty - p.y, 150 * aiSpeed, dt);
@@ -370,7 +369,7 @@
     for (const p of players) {
       const eligible = kind === 'pass'
         ? p === target || canTarget(from, p, 'attack')
-        : canTarget(from, p, 'attack') || (p !== from && p.zone !== 'infield') ||
+        : canTarget(from, p, 'attack') || (p.team !== from.team && p.zone !== 'infield') ||
           (from.zone !== 'infield' && p.team === from.team && p.zone === 'infield');
       if (!eligible) continue;
       const along = contactTime(p, dx, dy);
@@ -441,9 +440,10 @@
   function draw() {
     ctx.clearRect(0,0,W,H);
     ctx.fillStyle='#21576a';ctx.fillRect(0,0,W,H);
-    // Red outfield wraps the blue infield; blue outfield wraps red.
-    ctx.fillStyle='#7c3e51';ctx.fillRect(margin,margin,center-margin,H-2*margin);
-    ctx.fillStyle='#1d567c';ctx.fillRect(center,margin,W-margin-center,H-2*margin);
+    for (const team of [0, 1]) {
+      ctx.fillStyle = team === 1 ? '#7c3e51' : '#1d567c';
+      ctx.fillRect(outfieldOnLeft(team) ? margin : center, margin, center - margin, H - 2 * margin);
+    }
     ctx.fillStyle='#286e88';ctx.fillRect(leftEnd,innerTop,center-leftEnd,innerBottom-innerTop);
     ctx.fillStyle='#68556b';ctx.fillRect(center,innerTop,rightEnd-center,innerBottom-innerTop);
     // Top/bottom central area: move and catch, but no outfield attacks.
@@ -465,8 +465,12 @@
     }
     ctx.stroke();
     ctx.fillStyle='#eaf6ff';ctx.font='bold 15px system-ui';ctx.textAlign='center';
-    ctx.fillText('赤 外野',leftEnd-55,H/2);ctx.fillText('青 外野',rightEnd+55,H/2);
-    ctx.fillText('赤 外野',leftEnd+35,margin+25);ctx.fillText('青 外野',rightEnd-35,margin+25);
+    for (const team of [0, 1]) {
+      const label = teamName(team) + ' 外野';
+      const left = outfieldOnLeft(team);
+      ctx.fillText(label, left ? (margin + leftEnd) / 2 : W - (margin + leftEnd) / 2, 158);
+      ctx.fillText(label, left ? leftEnd + 35 : rightEnd - 35, margin + 25);
+    }
     ctx.fillText('青 内野',leftEnd+120,innerTop+25);ctx.fillText('赤 内野',rightEnd-120,innerTop+25);
     ctx.font='bold 12px system-ui';
     ctx.fillText('投球不可',center-60,margin+26);ctx.fillText('投球不可',center+60,margin+26);

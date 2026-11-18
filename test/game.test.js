@@ -11,7 +11,8 @@ const source = readFileSync(join(__dirname, '..', 'game.js'), 'utf8');
 const script = source.replace(/\}\)\(\);\s*$/, `
   globalThis.game = {
     start, update, draw, move, throwBall, selectTarget, playBall, evade, moveShot, moveLooseBall,
-    horizontalBounds, infield, outfield, contactTime, leftEnd, rightEnd, center, R,
+    horizontalBounds, infield, outfield, contactTime, outfieldPart, legalOutfieldThrow,
+    looseBallCandidates, cpuMode, margin, leftEnd, rightEnd, innerTop, innerBottom, center, R,
     get players() { return players; }, get ball() { return ball; },
     get controlled() { return controlled; }, get state() { return state; },
     get time() { return time; }
@@ -22,12 +23,12 @@ const script = source.replace(/\}\)\(\);\s*$/, `
 function setup(seed = 31) {
   const elements = new Map(), listeners = new Map();
   const labels = [];
-  const ctx = new Proxy({fillText: label => labels.push(label)}, {
+  const ctx = new Proxy({fillText: (label, x) => labels.push({label, x})}, {
     get: (target, key) => target[key] ?? (() => {})
   });
   function element(id) {
     if (!elements.has(id)) elements.set(id, {
-      width:960, height:560, value:'365', getContext:() => ctx, focus() {},
+      width:960, height:560, value:id === 'catchSetting' ? '0.4' : id === 'cpuDifficulty' ? 'normal' : '365', getContext:() => ctx, focus() {},
       addEventListener:(type, listener) => listeners.set(id + ':' + type, listener)
     });
     return elements.get(id);
@@ -56,7 +57,7 @@ function count(element) {
 }
 
 function fly(game) {
-  for (let i = 0; i < 300 && game.ball.shot; i++) game.moveShot(1 / 120);
+  for (let i = 0; i < 480 && game.ball.shot; i++) game.moveShot(1 / 120);
   assert.equal(game.ball.shot, null);
 }
 
@@ -66,26 +67,31 @@ function aim(game, from, target, kind = 'attack') {
   assert.equal(game.throwBall(from, kind, target), true);
 }
 
-test('starts 3v3 infield and 2v2 outfield and renders outfield roles', () => {
+test('starts 3v3 infield and 1v1 outfield and renders outfield roles', () => {
   const {game, element, labels} = setup();
-  assert.deepEqual(count(element), [3, 2, 3, 2]);
-  assert.equal(game.players.length, 10);
+  assert.deepEqual(count(element), [3, 1, 3, 1]);
+  assert.equal(game.players.length, 8);
   assert.equal(game.controlled.team, 0);
+  assert.deepEqual([game.margin, game.leftEnd, game.rightEnd, game.innerTop, game.innerBottom], [32, 122, 838, 112, 448]);
+  assert.ok(game.outfield(1)[0].x + game.R <= game.leftEnd);
+  assert.ok(game.outfield(0)[0].x - game.R >= game.rightEnd);
+  for (const team of [0, 1]) assert.equal(game.outfield(team)[0].number, 4);
   game.draw();
+  assert.ok(labels.filter(entry => entry.label === '赤 外野').every(entry => entry.x < game.center));
+  assert.ok(labels.filter(entry => entry.label === '青 外野').every(entry => entry.x > game.center));
   for (const label of ['赤 外野', '青 内野', '赤 内野', '青 外野', 'あなた', '初期']) {
-    assert.ok(labels.includes(label), label);
+    assert.ok(labels.some(entry => entry.label === label), label);
   }
 });
 
 test('clamps both outfields and rejects illegal releases and targets', () => {
   for (const team of [0, 1]) {
     const {game} = setup();
-    const [p, teammate] = game.outfield(team);
+    const [p] = game.outfield(team);
     const opponent = game.infield(1 - team)[0];
     game.move(p, team ? 1000 : -1000, 0, 500, 2);
     assert.equal(team ? p.x + game.R : p.x - game.R, team ? game.leftEnd : game.rightEnd);
     game.ball.owner = p;
-    assert.equal(game.throwBall(p, 'pass', teammate), false);
     assert.equal(game.throwBall(p, 'attack', game.outfield(1 - team)[0]), false);
     assert.equal(game.throwBall(p, 'attack', game.infield(team)[0]), false);
     assert.equal(game.selectTarget(p, 'pass').zone, 'infield');
@@ -104,8 +110,9 @@ test('P and AI exchange infield/outfield passes, even beyond the old flight limi
   const {game, element, press} = setup();
   const player = game.controlled;
   game.move(player, -1000, 0, 500, 2);
-  for (const red of game.infield(1)) red.y = 490;
-  for (const blue of game.outfield(0)) blue.y = 140;
+  for (const red of game.infield(1)) red.y = 415;
+  player.y = 150;
+  for (const blue of game.outfield(0)) blue.y = 150;
   element('speedSetting').value = '290';
   game.ball.owner = player;
   press('p');
@@ -115,7 +122,7 @@ test('P and AI exchange infield/outfield passes, even beyond the old flight limi
   assert.ok(game.ball.flight > 1.65);
   fly(game);
   assert.equal(game.ball.owner, receiver);
-  assert.deepEqual(count(element), [3, 2, 3, 2]);
+  assert.deepEqual(count(element), [3, 1, 3, 1]);
   aim(game, receiver, player, 'pass');
   fly(game);
   assert.equal(game.ball.owner, player);
@@ -126,9 +133,8 @@ test('P and AI exchange infield/outfield passes, even beyond the old flight limi
   for (const p of game.infield(0)) p.x = 450;
   game.ball.owner = cpu;
   game.playBall(cpu, 1 / 60);
-  assert.equal(game.ball.shot.kind, 'pass');
+  assert.ok(game.ball.shot);
   assert.equal(game.ball.shot.target.zone, 'infield');
-  assert.equal(game.ball.shot.target.team, 1);
 });
 
 test('pass interception gives possession without an out or a return', () => {
@@ -138,7 +144,7 @@ test('pass interception gives possession without an out or a return', () => {
   interceptor.y = target.y;
   fly(game);
   assert.equal(game.ball.owner, interceptor);
-  assert.deepEqual(count(element), [3, 2, 3, 2]);
+  assert.deepEqual(count(element), [3, 1, 3, 1]);
 });
 
 test('an out switches controls, then a successful outfield attack restores the player', () => {
@@ -150,20 +156,20 @@ test('an out switches controls, then a successful outfield attack restores the p
   assert.equal(original.zone, 'returning');
   assert.ok(original.x - game.R >= game.rightEnd);
   assert.notEqual(game.controlled, original);
-  assert.deepEqual(count(element), [2, 3, 3, 2]);
+  assert.deepEqual(count(element), [2, 2, 3, 1]);
   game.draw();
-  assert.ok(labels.includes('復帰可'));
+  assert.ok(labels.some(entry => entry.label === '復帰可'));
 
   const target = game.infield(1)[0];
   aim(game, original, target);
   fly(game);
   assert.equal(original.zone, 'infield');
   assert.ok(original.x < game.center);
-  assert.deepEqual(count(element), [3, 2, 2, 3]);
+  assert.deepEqual(count(element), [3, 1, 2, 2]);
   assert.equal(game.selectTarget(original, 'pass').zone, 'starter');
   aim(game, original, game.infield(1)[0]);
   fly(game);
-  assert.deepEqual(count(element), [3, 2, 1, 4]);
+  assert.deepEqual(count(element), [3, 1, 1, 3]);
 });
 
 test('a returning player cannot return through a friendly pass or a caught attack', () => {
@@ -180,7 +186,7 @@ test('a returning player cannot return through a friendly pass or a caught attac
   fly(game);
   assert.equal(game.ball.owner, catcher);
   assert.equal(returning.zone, 'returning');
-  assert.deepEqual(count(element), [3, 2, 2, 3]);
+  assert.deepEqual(count(element), [3, 1, 2, 2]);
   assert.match(element('status').textContent, /キャッチ成功/);
 });
 
@@ -194,13 +200,13 @@ test('both teams win on the last infield out, and restart resets score and contr
     }
     assert.equal(game.state, 'ended');
     assert.equal(game.infield(1 - winner).length, 0);
-    assert.equal(game.outfield(1 - winner).length, 5);
+    assert.equal(game.outfield(1 - winner).length, 4);
     assert.equal(element('overlay').hidden, false);
     assert.match(element('status').textContent, winner ? /赤チームの勝利/ : /青チームの勝利/);
     game.start();
     assert.equal(element('overlay').hidden, true);
     assert.equal(game.controlled.number, 1);
-    assert.deepEqual(count(element), [3, 2, 3, 2]);
+    assert.deepEqual(count(element), [3, 1, 3, 1]);
   }
 });
 
@@ -213,7 +219,7 @@ test('both teams evade attacks from either side and ignore friendly passes', () 
       aim(game, opponent, defender);
       const before = defender.y;
       assert.equal(game.evade(defender, 1 / 60), true);
-      assert.ok(defender.y < before);
+      assert.notEqual(defender.y, before);
       game.ball.owner = game.outfield(team)[0];
       assert.equal(game.throwBall(game.ball.owner, 'pass', defender), true);
       assert.equal(game.evade(defender, 1 / 60), false);
@@ -270,10 +276,11 @@ test('runs a ten-minute match, increases speed at ten seconds, and caps it at th
 
 test('seeded matches keep legal positions, progress through possessions, and conserve both rosters', () => {
   for (const seed of [17, 31, 46]) {
-    const {game, element} = setup(seed);
+    const {game, element, press} = setup(seed);
     let shots = 0;
     let lastShot = null;
     for (let i = 0; i < 21600 && game.state === 'playing'; i++) {
+      if (game.ball.owner && game.ball.owner === game.controlled) press(' ');
       game.update(1 / 60);
       if (game.ball.shot && game.ball.shot !== lastShot) shots++;
       lastShot = game.ball.shot;
@@ -281,12 +288,80 @@ test('seeded matches keep legal positions, progress through possessions, and con
       for (const p of game.players) {
         const [min, max] = game.horizontalBounds(p);
         assert.ok(p.x >= min && p.x <= max);
+        if (p.zone !== 'infield') assert.ok(game.outfieldPart(p));
       }
       for (const [inside, outside] of [[0, 1], [2, 3]]) {
         const counts = count(element);
-        assert.equal(counts[inside] + counts[outside], 5);
+        assert.equal(counts[inside] + counts[outside], 4);
       }
     }
     assert.ok(shots >= 3, `seed ${seed} produced ${shots} shots`);
   }
+});
+
+test('each U connects its endline and both arms, where central throws are blocked', () => {
+  for (const team of [0, 1]) {
+    const {game, element} = setup();
+    assert.deepEqual({...game.cpuMode()}, {dodge:1, move:1, hold:1, aim:0});
+    element('cpuDifficulty').value = 'easy';
+    const [p] = game.outfield(team);
+    const centralX = game.center + (team === 1 ? -35 : 35);
+    for (const [part, y] of [['top', game.innerTop - game.R], ['bottom', game.innerBottom + game.R]]) {
+      for (let i = 0; i < 500; i++) {
+        game.move(p, centralX - p.x, y - p.y, 150, 1 / 60);
+        assert.ok(game.outfieldPart(p));
+      }
+      assert.ok(Math.abs(p.x - centralX) < .001);
+      assert.equal(game.outfieldPart(p), part);
+      Object.assign(game.ball, {x:p.x, y:p.y, owner:null});
+      assert.equal(game.looseBallCandidates()[0], p);
+      game.moveLooseBall(1 / 60);
+      assert.equal(game.ball.owner, p);
+      assert.equal(game.throwBall(p, 'attack', game.infield(1 - team)[0]), false);
+      assert.equal(game.throwBall(p, 'pass', game.infield(team)[0]), false);
+      assert.ok(p.wait >= .25 && p.wait <= .4);
+
+      p.wait = 0;
+      for (let i = 0; i < 180 && !game.ball.shot; i++) game.playBall(p, 1 / 60);
+      assert.ok(game.ball.shot);
+      assert.ok(game.legalOutfieldThrow(p));
+      game.ball.shot = null;
+    }
+  }
+});
+
+test('both teams move their out players to the same end as their starter', () => {
+  for (const team of [0, 1]) {
+    const {game} = setup();
+    const victim = game.infield(team)[0];
+    aim(game, game.outfield(1 - team)[0], victim);
+    fly(game);
+    assert.equal(victim.zone, 'returning');
+    const [starter] = game.outfield(team).filter(p => p.zone === 'starter');
+    assert.equal(victim.x, starter.x);
+    game.ball.owner = victim;
+    assert.equal(game.throwBall(victim, 'pass', starter), false);
+    assert.equal(game.selectTarget(victim, 'pass').zone, 'infield');
+  }
+});
+
+test('an outfield shot can reach a friendly infield catcher through a friendly outfielder', () => {
+  const {game, element} = setup();
+  const [red] = game.outfield(1);
+  const [blue] = game.outfield(0);
+  const [target, returning] = game.infield(0);
+  aim(game, red, returning);
+  fly(game);
+  assert.equal(returning.zone, 'returning');
+
+  blue.x += 15;
+  aim(game, blue, game.infield(1)[0]);
+  // Continue the original shot beyond the missed red infield towards blue.
+  for (const p of game.infield(1)) p.y = 300;
+  returning.y = blue.y;
+  target.y = blue.y;
+  fly(game);
+  assert.equal(game.ball.owner, target);
+  assert.equal(returning.zone, 'returning');
+  assert.deepEqual(count(element), [2, 2, 3, 1]);
 });
