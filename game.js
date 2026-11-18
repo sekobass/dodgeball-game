@@ -297,7 +297,7 @@
       // Patrol all three arms of the U, not only the endline.
       const patrol = (Math.floor(time / 7 + p.phase / 4) % 3);
       tx = patrol === 0 ? sideX(p.team)
-        : (p.team ? rightEnd + 66 : leftEnd - 66);
+        : (p.team ? throwRightThird + 40 : throwLeftThird - 40);
       ty = patrol === 1 ? top + 8 : patrol === 2 ? bottom - 8 : H / 2;
     }
     move(p, tx - p.x, ty - p.y, 150 * aiSpeed, dt);
