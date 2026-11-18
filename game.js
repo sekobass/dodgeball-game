@@ -15,6 +15,12 @@
   const infield = team => players.filter(p => p.team === team && p.zone === 'infield');
   const outfield = team => players.filter(p => p.team === team && p.zone !== 'infield');
   const baseSpeed = () => Number($('speedSetting').value);
+  const cpuModes = {
+    easy: {dodge:0.25, move:0.80, hold:1.6, aim:0.20},
+    normal: {dodge:0.65, move:1.00, hold:1.0, aim:0.09},
+    hard: {dodge:0.95, move:1.22, hold:0.6, aim:0.025}
+  };
+  const cpuMode = () => cpuModes[$('cpuDifficulty').value] || cpuModes.normal;
   const speedLevel = () => Math.min(12, Math.floor(time / 10));
   const speedMultiplier = () => 1 + speedLevel() / 6;
   const currentBallSpeed = () => Math.round(baseSpeed() * speedMultiplier());
@@ -37,7 +43,7 @@
     for (const team of [0, 1]) {
       for (let i = 0; i < 5; i++) {
         const p = {team, number:i + 1, zone:i < 3 ? 'infield' : 'starter', wait:0,
-          phase:i * 2 + team, dodgeDir:0, dodgeUntil:0, catchUntil:0, nextCatch:0};
+          phase:i * 2 + team, dodgeDir:0, dodgeUntil:0, lastThreat:null, dodgeEnabled:false, catchUntil:0, nextCatch:0};
         const [minX, maxX] = horizontalBounds(p);
         p.x = i < 3 ? frontX(team, 81) : (minX + maxX) / 2;
         p.y = i < 3 ? 140 + i * 140 : 175 + (i - 3) * 210;
@@ -109,8 +115,12 @@
     ball.flight = Math.max(1.65, length / speed + .12);
     ball.x = p.x;
     ball.y = p.y;
-    ball.vx = (target.x - p.x) * speed / length;
-    ball.vy = (target.y - p.y) * speed / length;
+    // Only red CPU attacks lose accuracy on lower difficulty.
+    const angleError = p.team === 1 && kind === 'attack' ?
+      (Math.random() * 2 - 1) * cpuMode().aim : 0;
+    const angle = Math.atan2(target.y-p.y, target.x-p.x) + angleError;
+    ball.vx = Math.cos(angle) * speed;
+    ball.vy = Math.sin(angle) * speed;
     ball.trail = [];
     ball.receivedPass = false;
     p.wait = .8;
@@ -143,6 +153,13 @@
   }
 
   function evade(p, dt) {
+    // Roll only once per incoming shot, avoiding random changes each frame.
+    if (p.team === 1 && ball.shot !== p.lastThreat) {
+      p.lastThreat = ball.shot;
+      p.dodgeEnabled = !!ball.shot && Math.random() < cpuMode().dodge;
+      if (!p.dodgeEnabled) p.dodgeUntil = 0;
+    }
+    if (p.team === 1 && !p.dodgeEnabled) return false;
     const direction = dodgeDirection(p);
     if (direction && time >= p.dodgeUntil) {
       p.dodgeDir = direction;
@@ -151,7 +168,7 @@
     if (ball.shot?.kind !== 'attack' || ball.shot.from.team === p.team) p.dodgeUntil = 0;
     if (time >= p.dodgeUntil) return false;
     // Retreat away from the thrower, whether the attack comes from the front or back.
-    move(p, Math.sign(ball.vx) * 115, p.dodgeDir * 270, 265, dt);
+    move(p, Math.sign(ball.vx) * 115, p.dodgeDir * 270, p.team === 1 ? 265 * cpuMode().move : 265, dt);
     return true;
   }
 
@@ -165,7 +182,7 @@
     if (p.zone === 'infield') {
       const dx = frontX(p.team, 8) - p.x;
       if (Math.abs(dx) > 2) {
-        move(p, dx, 0, 175, dt);
+        move(p, dx, 0, p.team === 1 ? 175 * cpuMode().move : 175, dt);
         return;
       }
     }
@@ -187,6 +204,7 @@
   }
 
   function moveAI(p, chaser, dt) {
+    const aiSpeed = p.team === 1 ? cpuMode().move : 1;
     if (ball.owner === p) {
       playBall(p, dt);
       return;
@@ -194,7 +212,7 @@
     if (p.zone === 'infield' && evade(p, dt)) return;
     if (ball.shot?.kind === 'pass' && ball.shot.target === p) return;
     if (p === chaser) {
-      move(p, ball.x - p.x, ball.y - p.y, 150, dt);
+      move(p, ball.x - p.x, ball.y - p.y, 150 * aiSpeed, dt);
       return;
     }
 
@@ -210,7 +228,7 @@
       tx = (minX + maxX) / 2 + 13 * Math.sin(time * .9 + p.phase);
       ty = top + (bottom - top) * lane / (teammates.length + 1) + (ball.y - H / 2) * .16;
     }
-    move(p, tx - p.x, ty - p.y, 150, dt);
+    move(p, tx - p.x, ty - p.y, 150 * aiSpeed, dt);
   }
 
   function stopFlight(drag, lock) {
@@ -228,7 +246,7 @@
     ball.owner = p;
     ball.receivedPass = receivedPass;
     ballIdle = 0;
-    p.wait = 1.1 + Math.random() * .6;
+    p.wait = (1.1 + Math.random() * .6) * (p.team === 1 ? cpuMode().hold : 1);
     if (p === controlled) $('status').textContent = 'ボールを持っているよ！ Spaceで投球・Pでパス';
   }
 
