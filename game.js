@@ -4,9 +4,9 @@
   const $ = id => document.getElementById(id);
   const W = canvas.width, H = canvas.height, R = 19, margin = 32;
   const center = W / 2;
-  const leftEnd = 104, rightEnd = W - leftEnd;
+  const leftEnd = 88, rightEnd = W - leftEnd;
   const top = margin + R, bottom = H - margin - R;
-  const innerTop = 96, innerBottom = H - innerTop;
+  const innerTop = 84, innerBottom = H - innerTop;
   const throwLeftThird = margin + (W - 2 * margin) / 3;
   const throwRightThird = W - throwLeftThird;
   const ballRadius = 10;
