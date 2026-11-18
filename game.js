@@ -77,7 +77,7 @@
     }
     controlled = players[0];
     ball = {x:leftEnd + 95, y:H / 2, vx:0, vy:0, owner:null, shot:null, flight:0,
-      lock:0, trail:[], receivedPass:false};
+      lock:0, trail:[], receivedPass:false, looseOutfieldAttackFrom:null};
     effects = [];
     time = 0;
     ballIdle = 0;
@@ -149,6 +149,7 @@
     ball.vy = Math.sin(angle) * speed;
     ball.trail = [];
     ball.receivedPass = false;
+    ball.looseOutfieldAttackFrom = null;
     p.wait = .8;
     if (p === controlled) $('status').textContent = kind === 'pass' ? '外野へパス！' : 'ナイススロー！';
     return true;
@@ -316,6 +317,7 @@
     stopFlight(0, 0);
     ball.owner = p;
     ball.receivedPass = receivedPass;
+    ball.looseOutfieldAttackFrom = null;
     ballIdle = 0;
     // Outfield players release quickly regardless of CPU difficulty.
     // Infield timing continues to follow the existing difficulty settings.
@@ -360,13 +362,19 @@
     return (-approach - Math.sqrt(discriminant)) / travel;
   }
 
+  function missedShotInThrowersOutfield(thrower, x, y) {
+    if (thrower.zone === 'infield') return false;
+    const onOwnSide = outfieldOnLeft(thrower.team) ? x < center : x > center;
+    return onOwnSide && (x <= leftEnd || x >= rightEnd || y <= innerTop || y >= innerBottom);
+  }
+
   function giveTurnoverBall(thrower) {
     // Give a missed outfield attack to the other team's infield.
     const opponent = 1 - thrower.team;
     const receiver = nearest(ball, infield(opponent));
     if (receiver) {
       takeBall(receiver);
-      $('status').textContent = '外野の球がセンターラインを越えなかったため、' + teamName(opponent) + 'チームのボール！';
+      $('status').textContent = '外野の投球が無効になったため、' + teamName(opponent) + 'チームのボール！';
     } else {
       stopFlight(0, 0);
     }
@@ -415,11 +423,13 @@
     const x = clamp(ball.x, margin + ballRadius, W - margin - ballRadius);
     const y = clamp(ball.y, margin + ballRadius, H - margin - ballRadius);
     if (ball.x !== x || ball.y !== y || ball.flight <= 0) {
-      if (kind === 'attack' && from.zone !== 'infield' && !ball.shot.crossedCenter) {
+      if (kind === 'attack' && from.zone !== 'infield' &&
+          (!ball.shot.crossedCenter || missedShotInThrowersOutfield(from, x, y))) {
         giveTurnoverBall(from);
         return;
       }
       stopFlight(0, .15);
+      ball.looseOutfieldAttackFrom = kind === 'attack' && from.zone !== 'infield' ? from : null;
     }
     ball.x = x;
     ball.y = y;
@@ -442,7 +452,11 @@
     ball.lock = Math.max(0, ball.lock - dt);
     if (ball.lock > 0) return;
     const p = nearest(ball, looseBallCandidates());
-    if (p && distance(p, ball) <= R + ballRadius) takeBall(p);
+    if (p && distance(p, ball) <= R + ballRadius) {
+      if (p.zone !== 'infield' && ball.looseOutfieldAttackFrom?.team === p.team) {
+        giveTurnoverBall(ball.looseOutfieldAttackFrom);
+      } else takeBall(p);
+    }
   }
 
   function update(dt) {
