@@ -360,13 +360,19 @@
     return (-approach - Math.sqrt(discriminant)) / travel;
   }
 
+  function missedShotInThrowersOutfield(thrower, x, y) {
+    if (thrower.zone === 'infield') return false;
+    const onOwnSide = outfieldOnLeft(thrower.team) ? x < center : x > center;
+    return onOwnSide && (x <= leftEnd || x >= rightEnd || y <= innerTop || y >= innerBottom);
+  }
+
   function giveTurnoverBall(thrower) {
     // Give a missed outfield attack to the other team's infield.
     const opponent = 1 - thrower.team;
     const receiver = nearest(ball, infield(opponent));
     if (receiver) {
       takeBall(receiver);
-      $('status').textContent = '外野の球がセンターラインを越えなかったため、' + teamName(opponent) + 'チームのボール！';
+      $('status').textContent = '外野の投球が無効になったため、' + teamName(opponent) + 'チームのボール！';
     } else {
       stopFlight(0, 0);
     }
@@ -415,7 +421,8 @@
     const x = clamp(ball.x, margin + ballRadius, W - margin - ballRadius);
     const y = clamp(ball.y, margin + ballRadius, H - margin - ballRadius);
     if (ball.x !== x || ball.y !== y || ball.flight <= 0) {
-      if (kind === 'attack' && from.zone !== 'infield' && !ball.shot.crossedCenter) {
+      if (kind === 'attack' && from.zone !== 'infield' &&
+          (!ball.shot.crossedCenter || missedShotInThrowersOutfield(from, x, y))) {
         giveTurnoverBall(from);
         return;
       }
