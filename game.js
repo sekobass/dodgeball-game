@@ -137,7 +137,7 @@
     const length = distance(p, target);
     const speed = currentBallSpeed();
     ball.owner = null;
-    ball.shot = {kind, from:p, target};
+    ball.shot = {kind, from:p, target, crossedCenter:false};
     ball.flight = Math.max(1.65, length / speed + .12);
     ball.x = p.x;
     ball.y = p.y;
@@ -360,6 +360,18 @@
     return (-approach - Math.sqrt(discriminant)) / travel;
   }
 
+  function giveTurnoverBall(thrower) {
+    // Give a missed outfield attack to the other team's infield.
+    const opponent = 1 - thrower.team;
+    const receiver = nearest(ball, infield(opponent));
+    if (receiver) {
+      takeBall(receiver);
+      $('status').textContent = '外野の球がセンターラインを越えなかったため、' + teamName(opponent) + 'チームのボール！';
+    } else {
+      stopFlight(0, 0);
+    }
+  }
+
   function moveShot(dt) {
     const {from, target, kind} = ball.shot;
     const step = Math.min(dt, ball.flight);
@@ -378,8 +390,14 @@
         hit = p;
       }
     }
+    const beforeX = ball.x;
     ball.x += dx * contact;
     ball.y += dy * contact;
+    if (kind === 'attack' && from.zone !== 'infield' &&
+        ((beforeX < center && ball.x >= center) ||
+         (beforeX > center && ball.x <= center))) {
+      ball.shot.crossedCenter = true;
+    }
     if (hit) {
       const manualCatch = hit === controlled && hit.catchUntil > time;
       const safeCatch = hit.zone !== 'infield' ||
@@ -396,7 +414,13 @@
     ball.flight -= step;
     const x = clamp(ball.x, margin + ballRadius, W - margin - ballRadius);
     const y = clamp(ball.y, margin + ballRadius, H - margin - ballRadius);
-    if (ball.x !== x || ball.y !== y || ball.flight <= 0) stopFlight(0, .15);
+    if (ball.x !== x || ball.y !== y || ball.flight <= 0) {
+      if (kind === 'attack' && from.zone !== 'infield' && !ball.shot.crossedCenter) {
+        giveTurnoverBall(from);
+        return;
+      }
+      stopFlight(0, .15);
+    }
     ball.x = x;
     ball.y = y;
   }
